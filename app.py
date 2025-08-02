@@ -6,7 +6,7 @@ from PIL import Image
 import numpy as np
 import os
 import hashlib
-from groq import Groq
+import groq
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
@@ -111,7 +111,7 @@ def predict_glaucoma(image, model):
 # 💬 Chatbot function
 def query_groq_chatbot(prompt):
     try:
-        client = Groq(api_key=os.environ['GROQ_API_KEY'])
+        client = groq.Client(api_key=os.environ['GROQ_API_KEY'])
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = [
                 {"role": "system", "content": "You are an expert ophthalmologist AI. Provide accurate, concise information about glaucoma and eye health."}
