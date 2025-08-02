@@ -4,81 +4,99 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 from PIL import Image
 import numpy as np
-import sqlite3
-import hashlib
 import os
+import hashlib
 from groq import Groq
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
 
-# ⚙️ Streamlit page config
-st.set_page_config(page_title="GlaucoDetect AI", layout="wide")
+# ⚙️ Load environment variables
+load_dotenv()
 
-# 🛠 Initialize SQLite database
-conn = sqlite3.connect('users.db', check_same_thread=False)
-c = conn.cursor()
+# ⚙️ Streamlit config
+st.set_page_config(page_title="NzubeGlaucoDetect AI", layout="wide")
 
-# Create tables if they don't exist
-c.execute('''
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE,
-    fullname TEXT,
-    password TEXT
-)
-''')
-c.execute('''
-CREATE TABLE IF NOT EXISTS predictions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT,
-    patient_name TEXT,
-    age INTEGER,
-    iop REAL,
-    country TEXT,
-    eye TEXT,
-    result TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-)
-''')
-conn.commit()
+# 🛠 Initialize PostgreSQL for Render
+def get_db_connection():
+    return psycopg2.connect(os.environ['DATABASE_URL'])
 
-# 🔒 Helper functions
+def init_db():
+    conn = get_db_connection()
+    with conn.cursor() as c:
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE,
+            fullname TEXT,
+            password TEXT
+        )''')
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS predictions (
+            id SERIAL PRIMARY KEY,
+            username TEXT,
+            patient_name TEXT,
+            age INTEGER,
+            iop REAL,
+            country TEXT,
+            eye TEXT,
+            result TEXT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+    conn.commit()
+    conn.close()
+
+# 🔒 Auth functions
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-def check_password(hashed_password, user_password):
-    return hashed_password == hashlib.sha256(user_password.encode()).hexdigest()
-
 def add_user(username, fullname, password):
+    conn = get_db_connection()
     try:
-        c.execute('INSERT INTO users (username, fullname, password) VALUES (?, ?, ?)',
-                  (username, fullname, hash_password(password)))
+        with conn.cursor() as c:
+            c.execute(
+                'INSERT INTO users (username, fullname, password) VALUES (%s, %s, %s)',
+                (username, fullname, hash_password(password))
+            )
         conn.commit()
         return True
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
         return False
+    finally:
+        conn.close()
 
 def get_user(username):
-    c.execute('SELECT * FROM users WHERE username = ?', (username,))
-    return c.fetchone()
+    conn = get_db_connection()
+    with conn.cursor(cursor_factory=RealDictCursor) as c:
+        c.execute('SELECT * FROM users WHERE username = %s', (username,))
+        return c.fetchone()
+    conn.close()
 
 def save_prediction(username, patient_name, age, iop, country, eye, result):
-    c.execute('''
-        INSERT INTO predictions (username, patient_name, age, iop, country, eye, result)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (username, patient_name, age, iop, country, eye, result))
+    conn = get_db_connection()
+    with conn.cursor() as c:
+        c.execute('''
+            INSERT INTO predictions (username, patient_name, age, iop, country, eye, result)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ''', (username, patient_name, age, iop, country, eye, result))
     conn.commit()
+    conn.close()
 
 def get_user_predictions(username):
-    c.execute('''
-        SELECT patient_name, age, iop, country, eye, result, timestamp
-        FROM predictions WHERE username=?
-        ORDER BY timestamp DESC
-    ''', (username,))
-    return c.fetchall()
+    conn = get_db_connection()
+    with conn.cursor(cursor_factory=RealDictCursor) as c:
+        c.execute('''
+            SELECT patient_name, age, iop, country, eye, result, timestamp
+            FROM predictions WHERE username=%s
+            ORDER BY timestamp DESC
+        ''', (username,))
+        return c.fetchall()
+    conn.close()
 
 # 🤖 Load AI model
 @st.cache_resource
 def load_glaucoma_model():
-    return load_model("NzubeGlaucoma_AI_Predictor.h5")
+    return load_model("static/NzubeGlaucoma_AI_Predictor.h5")
 
 model = load_glaucoma_model()
 
@@ -90,40 +108,34 @@ def predict_glaucoma(image, model):
     prediction = model.predict(img_array)
     return "Glaucoma Detected" if prediction[0][0] > 0.5 else "No Glaucoma Detected"
 
-# 🆕 Enhanced Groq Chatbot
+# 💬 Chatbot function
 def query_groq_chatbot(prompt):
     try:
-        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-        
-        # Initialize chat history with medical context
+        client = Groq(api_key=os.environ['GROQ_API_KEY'])
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = [
                 {"role": "system", "content": "You are an expert ophthalmologist AI. Provide accurate, concise information about glaucoma and eye health."}
             ]
         
-        # Add user message to history
         st.session_state.chat_history.append({"role": "user", "content": prompt})
-        
-        # Stream the response
         full_response = ""
         message_placeholder = st.empty()
         
         for chunk in client.chat.completions.create(
             model="meta-llama/llama-4-scout-17b-16e-instruct",
             messages=st.session_state.chat_history,
-            temperature=0.3,  # Lower for medical accuracy
+            temperature=0.3,
             max_tokens=512,
             stream=True
         ):
             full_response += (chunk.choices[0].delta.content or "")
             message_placeholder.markdown(full_response + "▌")
             
-        # Update history and display final response
         message_placeholder.markdown(full_response)
         st.session_state.chat_history.append({"role": "assistant", "content": full_response})
         
     except Exception as e:
-        st.error(f"⚠️ System Error: {str(e)}")
+        st.error(f"⚠️ Error: {str(e)}")
         return "Our medical chatbot is temporarily unavailable. Please try again later."
 
 # 📦 Session state
@@ -131,18 +143,21 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user_fullname' not in st.session_state:
     st.session_state.user_fullname = ''
+if 'db_initialized' not in st.session_state:
+    init_db()
+    st.session_state.db_initialized = True
 
 # 🔐 Login
 def login():
-    st.title("🔐 Login to GlaucoDetect AI")
+    st.title("🔐 Login to NzubeGlaucoDetect AI")
     username = st.text_input("Username")
     password = st.text_input("Password", type='password')
     if st.button("Login"):
         user = get_user(username)
-        if user and check_password(user[3], password):
+        if user and hash_password(password) == user['password']:
             st.session_state.logged_in = True
-            st.session_state.user_fullname = user[2]
-            st.success(f"Welcome, {user[2]}! 🎉")
+            st.session_state.user_fullname = user['fullname']
+            st.success(f"Welcome, {user['fullname']}! 🎉")
         else:
             st.error("Invalid username or password")
 
@@ -177,7 +192,7 @@ else:
     page = st.sidebar.radio("📋 Menu", ["🏠 Home", "🔍 Predict", "📊 History", "💬 Chatbot", "ℹ️ About", "🚪 Logout"])
 
     if page == "🏠 Home":
-        st.title("👁️ GlaucoDetect AI by Dr. Anthony")
+        st.title("👁️ NzubeGlaucoDetect AI by Dr. Anthony")
         st.markdown("<hr style='border:1px solid #ddd'>", unsafe_allow_html=True)
         st.subheader("Your AI-powered assistant for glaucoma screening")
         st.markdown("""
@@ -186,7 +201,7 @@ else:
         ✅ View your prediction history  
         ✅ Chat with our integrated AI chatbot  
 
-        ⚠️ *Disclaimer*: This tool is for educational purposes only.
+        ⚠️ *Disclaimer*: This tool is for educational purposes only. If you have an eye problem, see an Eye Doctor (Optometrist/Ophthalmologist) for professional diagnosis and treatment.
         """)
 
     elif page == "🔍 Predict":
@@ -229,10 +244,10 @@ else:
         history = get_user_predictions(st.session_state.user_fullname)
         if history:
             for record in history:
-                patient_name, age, iop, country, eye, result, timestamp = record
                 st.markdown(f"""
-                ✅ **Date:** {timestamp} | **Patient:** *{patient_name}* | **Eye:** {eye} | **Result:** {result}  
-                ℹ️ Age: {age} | IOP: {iop} | Country: {country}
+                ✅ **Date:** {record['timestamp']} | **Patient:** *{record['patient_name']}*  
+                👁️ **Eye:** {record['eye']} | **Result:** {record['result']}  
+                ℹ️ **Age:** {record['age']} | **IOP:** {record['iop']} mmHg | **Country:** {record['country']}
                 """)
                 st.markdown("---")
         else:
@@ -242,17 +257,14 @@ else:
         st.title("💬 AI Ophthalmology Assistant")
         st.caption("Ask me anything about glaucoma or eye health")
         
-        # Initialize chat history
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = []
         
-        # Display chat messages (excluding system prompt)
         for message in st.session_state.chat_history:
             if message["role"] != "system":
                 with st.chat_message(message["role"]):
                     st.markdown(message["content"])
         
-        # User input
         if prompt := st.chat_input("Type your question..."):
             with st.chat_message("user"):
                 st.markdown(prompt)
@@ -261,11 +273,11 @@ else:
                 query_groq_chatbot(prompt)
 
     elif page == "ℹ️ About":
-        st.title("ℹ️ About GlaucoDetect AI")
+        st.title("ℹ️ About NzubeGlaucoDetect AI")
         st.markdown("""
-        GlaucoDetect AI helps screen for glaucoma by analyzing fundus images with deep learning.
+        NzubeGlaucoDetect AI helps screen for glaucoma by analyzing fundus images with deep learning.
 
-        **Created by:** Dr. Anthony  
+        **Created by:** Dr. Anthony Anyanwu  
         **Built with:** Streamlit, TensorFlow, Groq AI
         """)
 
