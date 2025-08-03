@@ -94,16 +94,23 @@ def get_user_predictions(username):
     conn.close()
 
 # 🤖 Load AI model
+# 🤖 Load AI model
 @st.cache_resource
 def load_glaucoma_model():
+    # First check if file exists
+    if not os.path.exists("static/NzubeGlaucoma_AI_Predictor.h5"):
+        st.error("⚠️ Model file not found at: static/NzubeGlaucoma_AI_Predictor.h5")
+        st.warning("Please ensure: \n1. The file exists \n2. It's in the static folder")
+        return None
+    
     try:
         # Explicitly specify custom objects if needed
         return load_model("static/NzubeGlaucoma_AI_Predictor.h5", 
                         compile=False,
                         custom_objects=None)
     except Exception as e:
-        st.error(f"⚠️ Failed to load model: {str(e)}")
-        st.warning("Please check if the model file exists and is compatible")
+        st.error(f"⚠️ Model loading failed. Technical details: {str(e)}")
+        st.warning("Possible causes: \n1. TensorFlow version mismatch \n2. Corrupted model file")
         return None
 
 model = load_glaucoma_model()
