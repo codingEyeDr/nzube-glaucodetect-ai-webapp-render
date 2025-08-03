@@ -96,17 +96,42 @@ def get_user_predictions(username):
 # 🤖 Load AI model
 @st.cache_resource
 def load_glaucoma_model():
-    return load_model("static/NzubeGlaucoma_AI_Predictor.h5")
+    try:
+        # Explicitly specify custom objects if needed
+        return load_model("static/NzubeGlaucoma_AI_Predictor.h5", 
+                        compile=False,
+                        custom_objects=None)
+    except Exception as e:
+        st.error(f"⚠️ Failed to load model: {str(e)}")
+        st.warning("Please check if the model file exists and is compatible")
+        return None
 
 model = load_glaucoma_model()
+if model is None:
+    st.warning("⚠️ AI model failed to load. Prediction features disabled.")
 
 # 🔍 Prediction function
 def predict_glaucoma(image, model):
-    img = image.resize((224, 224))
-    img_array = np.array(img) / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
-    prediction = model.predict(img_array)
-    return "Glaucoma Detected" if prediction[0][0] > 0.5 else "No Glaucoma Detected"
+    if model is None:
+        return "Model not loaded - please contact admin"
+    
+    try:
+        img = image.resize((224, 224))
+        img_array = np.array(img) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+        
+        # Add error handling for prediction
+        prediction = model.predict(img_array)
+        confidence = float(prediction[0][0])
+        
+        if confidence > 0.5:
+            return f"Glaucoma Detected ({confidence:.2%} confidence)"
+        else:
+            return f"No Glaucoma Detected ({1-confidence:.2%} confidence)"
+            
+    except Exception as e:
+        st.error(f"Prediction error: {str(e)}")
+        return "Prediction failed"
 
 # 💬 Chatbot function
 def query_groq_chatbot(prompt):
@@ -222,9 +247,12 @@ else:
                 img_right = Image.open(right_eye_image)
                 st.image(img_right, caption='Right Eye Fundus', use_container_width=True)
                 if st.button("Predict Right Eye"):
-                    result_right = predict_glaucoma(img_right, model)
-                    st.success(f"Prediction: **{result_right}**")
-                    save_prediction(st.session_state.user_fullname, patient_name, age, iop_right, country, "Right", result_right)
+                    if model is not None:  # <- Add this check
+                        result_right = predict_glaucoma(img_right, model)
+                        st.success(f"Prediction: **{result_right}**")
+                        save_prediction(st.session_state.user_fullname, patient_name, age, iop_right, country, "Right", result_right)
+                    else:
+                        st.error("Model not available for predictions")  # <- Add this fallback
 
         with col2:
             st.subheader("👁️ Left Eye")
@@ -234,9 +262,12 @@ else:
                 img_left = Image.open(left_eye_image)
                 st.image(img_left, caption='Left Eye Fundus', use_container_width=True)
                 if st.button("Predict Left Eye"):
-                    result_left = predict_glaucoma(img_left, model)
-                    st.success(f"Prediction: **{result_left}**")
-                    save_prediction(st.session_state.user_fullname, patient_name, age, iop_left, country, "Left", result_left)
+                    if model is not None:  # <- Add this check
+                        result_left = predict_glaucoma(img_left, model)
+                        st.success(f"Prediction: **{result_left}**")
+                        save_prediction(st.session_state.user_fullname, patient_name, age, iop_left, country, "Left", result_left)
+                    else:
+                        st.error("Model not available for predictions")  # <- Add this fallback
 
     elif page == "📊 History":
         st.title("📊 Prediction History")
