@@ -1,10 +1,14 @@
-# 📦 Import libraries
+import os
+# Configure TensorFlow logging before importing TensorFlow
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress ALL TensorFlow messages
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'  # Important for memory management
+
+# Now import other libraries
 import streamlit as st
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 from PIL import Image
 import numpy as np
-import os
 import hashlib
 import groq
 import psycopg2

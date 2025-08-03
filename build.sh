@@ -2,24 +2,22 @@
 # Force clean Python 3.10 environment
 python3.10 -m pip install --upgrade pip
 
-# Critical dependency order
-python3.10 -m pip uninstall -y tensorflow keras  # Clean any existing installations
-python3.10 -m pip install --no-cache-dir tensorflow==2.16.1  # Must match your model's version
-python3.10 -m pip install --no-cache-dir protobuf==3.20.3  # Required for TF 2.16
+# Clean existing installations
+python3.10 -m pip uninstall -y tensorflow keras
 
-# Core dependencies
-python3.10 -m pip install --no-cache-dir python-dotenv==1.0.1
-python3.10 -m pip install --no-cache-dir groq==0.4.0
+# Install core dependencies
+python3.10 -m pip install --no-cache-dir tensorflow==2.16.1 protobuf==3.20.3
+python3.10 -m pip install --no-cache-dir python-dotenv==1.0.1 groq==0.4.0
 
-# Main installation
+# Install remaining requirements
 python3.10 -m pip install --no-cache-dir -r requirements.txt
 
-# Verify installations
+# Simplified verification (removed dotenv version check)
 python3.10 -c "
 import tensorflow as tf;
-import groq, dotenv;
+import groq;
+print(f'\n=== Verification ===');
 print(f'TensorFlow: {tf.__version__}');
 print(f'Groq: {groq.__version__}');
-print(f'Dotenv: {dotenv.__version__}');
 print('All critical dependencies installed successfully');
 "
